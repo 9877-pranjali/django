@@ -1,0 +1,115 @@
+django-admin startproject studentportal
+cd studentportal
+python manage.py startapp main
+from django.db import models
+from django.contrib.auth.models import User
+
+class Group(models.Model):
+    name = models.CharField(max_length=100)
+    logo = models.ImageField(upload_to='group_logos/')
+    admin = models.ForeignKey(User, on_delete=models.CASCADE)
+
+    def __str__(self):
+        return self.name
+
+class Student(models.Model):
+    name = models.CharField(max_length=100)
+    contact = models.CharField(max_length=15)
+    group = models.ForeignKey(Group, on_delete=models.CASCADE, related_name='students')
+
+    def __str__(self):
+        return self.name
+
+class Notification(models.Model):
+    title = models.CharField(max_length=100)
+    message = models.TextField()
+    timestamp = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.title
+from django.contrib import admin
+from .models import Group, Student, Notification
+
+admin.site.register(Group)
+admin.site.register(Student)
+admin.site.register(Notification)
+from django.shortcuts import render, get_object_or_404, redirect
+from .models import Group, Student, Notification
+from django.contrib.auth.decorators import login_required
+from .forms import StudentForm, GroupForm
+
+def home(request):
+    groups = Group.objects.all()
+    notifications = Notification.objects.order_by('-timestamp')[:5]
+    query = request.GET.get('query')
+    if query:
+        groups = groups.filter(name__icontains=query)
+    return render(request, 'main/home.html', {'groups': groups, 'notifications': notifications})
+
+def group_detail(request, group_id):
+    group = get_object_or_404(Group, id=group_id)
+    students = group.students.all()
+    return render(request, 'main/group_detail.html', {'group': group, 'students': students})
+
+@login_required
+def add_student(request, group_id):
+    group = get_object_or_404(Group, id=group_id)
+    if request.user != group.admin:
+        return redirect('home')
+
+    if request.method == 'POST':
+        form = StudentForm(request.POST)
+        if form.is_valid():
+            student = form.save(commit=False)
+            student.group = group
+            student.save()
+            return redirect('group_detail', group_id=group.id)
+    else:
+        form = StudentForm()
+    return render(request, 'main/add_student.html', {'form': form, 'group': group})
+
+@login_required
+def create_group(request):
+    if request.method == 'POST':
+        form = GroupForm(request.POST, request.FILES)
+        if form.is_valid():
+            group = form.save(commit=False)
+            group.admin = request.user
+            group.save()
+            return redirect('home')
+    else:
+        form = GroupForm()
+    return render(request, 'main/create_group.html', {'form': form})
+from django import forms
+from .models import Student, Group
+
+class StudentForm(forms.ModelForm):
+    class Meta:
+        model = Student
+        fields = ['name', 'contact']
+
+class GroupForm(forms.ModelForm):
+    class Meta:
+        model = Group
+        fields = ['name', 'logo']
+from django.contrib import admin
+from django.urls import path, include
+from django.conf import settings
+from django.conf.urls.static import static
+
+urlpatterns = [
+    path('admin/', admin.site.urls),
+    path('', include('main.urls')),
+]
+
+if settings.DEBUG:
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+from django.urls import path
+from . import views
+
+urlpatterns = [
+    path('', views.home, name='home'),
+    path('group/<int:group_id>/', views.group_detail, name='group_detail'),
+    path('group/<int:group_id>/add_student/', views.add_student, name='add_student'),
+    path('create_group/', views.create_group, name='create_group'),
+]
